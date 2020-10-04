@@ -2,3 +2,4 @@ __pycache__
 .tox/
 log.txt
 .idea/
+TensorRT-7.0.0.11/

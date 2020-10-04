@@ -1,4 +1,6 @@
-FROM nvidia/cuda:10.0-base-ubuntu18.04
+FROM nvcr.io/nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04
+
+# FROM nvidia/cuda:10.0-base-ubuntu18.04
 
 LABEL maintainer="Amazon AI"
 # Specify LABEL for inference pipelines to use SAGEMAKER_BIND_TO_PORT
@@ -13,6 +15,8 @@ ARG TF_MODEL_SERVER_SOURCE=https://tensorflow-aws.s3-us-west-2.amazonaws.com/${T
 
 # See http://bugs.python.org/issue19846
 ENV LANG=C.UTF-8
+ENV TENSORRT_VERSION=7.0.0.11
+ENV PY3_VERSION=36
 ENV NCCL_VERSION=2.4.7-1+cuda10.0
 ENV CUDNN_VERSION=7.5.1.10-1+cuda10.0
 ENV TF_TENSORRT_VERSION=5.0.2
@@ -36,8 +40,8 @@ RUN apt-get update \
     cuda-curand-10-0 \
     cuda-cusolver-10-0 \
     cuda-cusparse-10-0 \
-    libcudnn7=${CUDNN_VERSION} \
-    libnccl2=${NCCL_VERSION} \
+    # libcudnn7=${CUDNN_VERSION} \
+    # libnccl2=${NCCL_VERSION} \
     libgomp1 \
     curl \
     git \
@@ -110,11 +114,48 @@ COPY sagemaker /sagemaker
 RUN curl ${TF_MODEL_SERVER_SOURCE} -o /usr/bin/tensorflow_model_server \
  && chmod 555 /usr/bin/tensorflow_model_server
 
+WORKDIR /
+# put tensorflow library (with only error_codes) to python dist-packages
+RUN mv /sagemaker/tensorflow/ /usr/local/lib/python3.*/dist-packages/
+
 # Expose gRPC and REST port
 EXPOSE 8500 8501
 
 # Set where models should be stored in the container
 RUN mkdir -p ${MODEL_BASE_PATH}
+
+RUN apt-get update \
+ &&  apt-get install -y python-dev python3-dev \
+     build-essential libssl-dev libffi-dev \
+     libxml2-dev libxslt1-dev zlib1g-dev \
+     python-pip
+
+RUN pip install --upgrade pip
+RUN pip install torch==1.5.1
+RUN pip install torchvision==0.6.1
+RUN pip install transformers==3.0.2
+RUN pip install onnx==1.7.0
+RUN pip install onnx-tf
+RUN pip install pycuda>=2019.1.1
+RUN pip install onnxruntime
+RUN pip install https://github.com/NVIDIA/TRTorch/releases/download/v0.0.3/trtorch-0.0.3-cp36-cp36m-linux_x86_64.whl
+
+COPY TensorRT-${TENSORRT_VERSION} /TensorRT-${TENSORRT_VERSION}
+
+RUN cd TensorRT-${TENSORRT_VERSION}/ && \
+    cp lib/lib* /usr/lib/x86_64-linux-gnu/ && \
+    rm /usr/lib/x86_64-linux-gnu/libnv*.a && \
+    cp include/* /usr/include/x86_64-linux-gnu/ && \
+    cp bin/* /usr/bin/ && \
+    # mkdir /usr/share/doc/tensorrt && \
+    cp -r doc/* /usr/share/doc/tensorrt/ && \
+    mkdir /usr/src/tensorrt && \
+    cp -r samples /usr/src/tensorrt/  && \
+    pip install --no-cache-dir python/tensorrt-${TENSORRT_VERSION}-cp${PY3_VERSION}-none-linux_x86_64.whl && \
+    pip install uff/uff-*-py2.py3-none-any.whl && \
+    pip install graphsurgeon/graphsurgeon-*-py2.py3-none-any.whl && \
+    cd ../
+    # rm -rf TensorRT-${TENSORRT_VERSION}*
 
 # Create a script that runs the model server so we can use environment variables
 # while also passing in arguments from the docker command line
